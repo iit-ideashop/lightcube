@@ -1,0 +1,6 @@
+{
+    "terminal.integrated.env.linux": {
+        "PATH": "/home/tberg/.platformio/penv/bin:/home/tberg/.platformio/penv:/home/tberg/.local/bin:/home/tberg/bin:/home/tberg/.local/bin:/home/tberg/bin:/usr/share/Modules/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/home/tberg/.composer/vendor/bin",
+        "PLATFORMIO_CALLER": "vscode"
+    }
+}
