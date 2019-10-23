@@ -168,9 +168,9 @@ void loop() {
         udp.beginPacket("255.255.255.255", 42069);
         struct control_packet ripplePkt = {
           PKT_RIPPLE,
-          (char)(to[0] * (float)255/PWMRANGE),
-          (char)(to[1] * (float)255/PWMRANGE),
-          (char)(to[2] * (float)255/PWMRANGE)
+          (char)(to[0] / (PWMRANGE/255)),
+          (char)(to[1] / (PWMRANGE/255)),
+          (char)(to[2] / (PWMRANGE/255))
         };
         udp.write((const char*) &ripplePkt, sizeof(struct control_packet));
         udp.endPacket();
