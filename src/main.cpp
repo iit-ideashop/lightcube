@@ -166,7 +166,12 @@ void loop() {
       } else if (tapCount > 1) {
         // send ripple
         udp.beginPacket("255.255.255.255", 42069);
-        struct control_packet ripplePkt = {PKT_RIPPLE, to[0], to[1], to[2]};
+        struct control_packet ripplePkt = {
+          PKT_RIPPLE,
+          (char)(to[0] * (float)255/PWMRANGE),
+          (char)(to[1] * (float)255/PWMRANGE),
+          (char)(to[2] * (float)255/PWMRANGE)
+        };
         udp.write((const char*) &ripplePkt, sizeof(struct control_packet));
         udp.endPacket();
         // broadcast packets are received by their sender so no need to do anything else,
