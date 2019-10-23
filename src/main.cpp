@@ -1,4 +1,5 @@
 #include <Arduino.h>
+
 #include <ESP8266WiFi.h>
 #include <WiFiUdp.h>
 
@@ -34,23 +35,44 @@ struct control_packet {
 };
 
 void updateTargets() {
+  Serial.println("Updating target colors");
   for (int i = 0; i < NPINS; i++) {
+    Serial.print("[");
+    Serial.print(i);
+    Serial.print("] ");    
     to[i] = random((int)(PWMRANGE * .75));
+    Serial.print(to[i]);
+    Serial.print("; ");
   }
+  Serial.println();
 }
 
 int linearEasing(int t, int duration, int from, int to) {
   return (int)(((to - from) * ((double)t / duration)) + from);
 }
 
+int quadraticEasing(int t, int duration, int from, int to) {
+  return (int)((to - from) * pow((double)t / duration, 2.0) + from);
+}
+
 void setup() {
   // get a random seed
+  Serial.begin(115200);
+  Serial.println("LightCube");
+  Serial.flush();
   pinMode(16, INPUT);
-  randomSeed(analogRead(16));
+  pinMode(LED_BUILTIN, OUTPUT);
+  randomSeed(analogRead(A0));
 
-  WiFi.begin("EventCtl", "Kaplan2019!");
+  if (WiFi.SSID() != "EventCtl")
+    WiFi.begin("EventCtl", "Kaplan2019!");
+
+  yield();
 
   udp.begin(CONTROL_PORT);
+
+  Serial.println("LightCube Hello");
+  Serial.flush();
 
   udp.beginPacket("255.255.255.255", 42069);
   udp.write(announcePkt);
@@ -67,6 +89,8 @@ void setup() {
     digitalWrite(pins[i], 0);
     delay(500);
   }
+  Serial.println("Pin test complete");
+  Serial.flush();
 
   updateTargets();
   targetTime = millis() + PERIOD;
@@ -75,8 +99,10 @@ void setup() {
 void loop() {
   if (WiFi.status() == WL_CONNECTED) {
     if (millis() > targetTime) {
-      if (state == STATE_ON)
+      if (state == STATE_ON) {
         updateTargets();
+      }
+      Serial.println("Sending announce");
       udp.beginPacket("255.255.255.255", 42069);
       udp.write(announcePkt);
       udp.endPacket();
@@ -103,10 +129,10 @@ void loop() {
       // breathe random colors
       for (int i = 0; i < NPINS; i++) {
         if (targetTime - millis() < PERIOD / 2)
-          analogWrite(pins[i], linearEasing(targetTime - millis(), PERIOD / 2, 0, to[i]));
+          analogWrite(pins[i], quadraticEasing(targetTime - millis(), PERIOD / 2, 0, to[i]));
           //digitalWrite(pins[i], HIGH);
         else
-          analogWrite(pins[i], linearEasing(targetTime - millis() - PERIOD / 2, PERIOD / 2, to[i], 0));
+          analogWrite(pins[i], quadraticEasing(targetTime - millis() - PERIOD / 2, PERIOD / 2, to[i], 0));
           //digitalWrite(pins[i], LOW);
       }
     } else if (state == STATE_SOLID) {
