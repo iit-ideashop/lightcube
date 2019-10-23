@@ -115,6 +115,7 @@ void setup() {
 
 void loop() {
   if (WiFi.status() == WL_CONNECTED) {
+    // update target colors if needed and send announce packet
     if (millis() > targetTime) {
       if (state == STATE_ON) {
         updateTargets();
@@ -126,6 +127,7 @@ void loop() {
       targetTime = millis() + PERIOD;
     }
     
+    // check for available packets
     if (udp.parsePacket() == sizeof(struct control_packet)) {
       struct control_packet pkt;
       udp.read((char *) &pkt, sizeof(struct control_packet));
@@ -148,6 +150,7 @@ void loop() {
       }
     }
 
+    // check for taps
     if (accel.available() && accel.readTap() > 0) {
       if (millis() - tapTime < ACCEL_DOUBLE_TAP_DELAY) {
         tapCount++;
@@ -171,6 +174,7 @@ void loop() {
       }
     }
 
+    // update PWM outputs
     if (state == STATE_ON) {
       // breathe random colors
       for (int i = 0; i < NPINS; i++) {
