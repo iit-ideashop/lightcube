@@ -5,6 +5,7 @@
 
 #define NPINS 3           // number of output pins
 #define PERIOD 20000       // time in milliseconds to fade between colors
+#define RIPPLE_PERIOD 5000
 
 #define CONTROL_PORT 42069
 
@@ -13,10 +14,12 @@
 #define STATE_ON 2
 #define STATE_OFF 3
 #define STATE_SOLID 4
+#define STATE_RIPPLE 5
 
 #define PKT_OFF 0
 #define PKT_ON 1
 #define PKT_SOLID 2
+#define PKT_RIPPLE 3
 
 int pins[NPINS] = {14, 6, 1};
 
@@ -122,6 +125,11 @@ void loop() {
         to[0] = pkt.r * (PWMRANGE / 255);
         to[1] = pkt.g * (PWMRANGE / 255);
         to[2] = pkt.b * (PWMRANGE / 255);
+      } else if (pkt.type == PKT_RIPPLE) {
+        state = STATE_RIPPLE;
+        to[0] = pkt.r * (PWMRANGE / 255);
+        to[1] = pkt.g * (PWMRANGE / 255);
+        to[2] = pkt.b * (PWMRANGE / 255);
       }
     }
 
@@ -138,6 +146,15 @@ void loop() {
     } else if (state == STATE_SOLID) {
       for (int i = 0; i < NPINS; i++) {
         analogWrite(pins[i], to[i]);
+      }
+    } else if (state == STATE_RIPPLE) {
+      for (int i = 0; i < NPINS; i++) {
+        if (targetTime - millis() < RIPPLE_PERIOD / 2)
+          analogWrite(pins[i], to[i]);
+          //digitalWrite(pins[i], HIGH);
+        else
+          analogWrite(pins[i], quadraticEasing(targetTime - millis() - RIPPLE_PERIOD / 2, RIPPLE_PERIOD / 2, to[i], 0));
+          //digitalWrite(pins[i], LOW);
       }
     } else {
       state = STATE_OFF;
