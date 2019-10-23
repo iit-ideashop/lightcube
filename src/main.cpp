@@ -3,9 +3,16 @@
 #include <ESP8266WiFi.h>
 #include <WiFiUdp.h>
 
+#include <Wire.h>
+#include <SparkFun_MMA8452Q.h>
+
 #define NPINS 3           // number of output pins
 #define PERIOD 20000       // time in milliseconds to fade between colors
 #define RIPPLE_PERIOD 5000
+
+// I2C pins are 4 SDA and 5 SCL
+#define ACCEL_DOUBLE_TAP_DELAY 2000
+#define ACCEL_TAP_THRESHOLD 1.0
 
 #define CONTROL_PORT 42069
 
@@ -26,9 +33,12 @@ int pins[NPINS] = {14, 6, 1};
 int to[NPINS];
 int from[NPINS];
 unsigned long targetTime;
+unsigned long tapTime;
+unsigned int tapCount;
 unsigned int state = STATE_CONN;
 WiFiUDP udp;
 char *announcePkt = "LightCube";
+MMA8452Q accel;
 
 struct control_packet {
   char type;
@@ -39,6 +49,7 @@ struct control_packet {
 
 void updateTargets() {
   Serial.println("Updating target colors");
+  if (state == STATE_RIPPLE) state = STATE_ON;
   for (int i = 0; i < NPINS; i++) {
     Serial.print("[");
     Serial.print(i);
@@ -66,6 +77,9 @@ void setup() {
   pinMode(16, INPUT);
   pinMode(LED_BUILTIN, OUTPUT);
   randomSeed(analogRead(A0));
+
+  Wire.begin();
+  accel.begin();
 
   if (WiFi.SSID() != "EventCtl")
     WiFi.begin("EventCtl", "Kaplan2019!");
@@ -125,11 +139,35 @@ void loop() {
         to[0] = pkt.r * (PWMRANGE / 255);
         to[1] = pkt.g * (PWMRANGE / 255);
         to[2] = pkt.b * (PWMRANGE / 255);
-      } else if (pkt.type == PKT_RIPPLE) {
+      } else if (pkt.type == PKT_RIPPLE && state == STATE_ON) {
+        targetTime = millis() + RIPPLE_PERIOD;
         state = STATE_RIPPLE;
         to[0] = pkt.r * (PWMRANGE / 255);
         to[1] = pkt.g * (PWMRANGE / 255);
         to[2] = pkt.b * (PWMRANGE / 255);
+      }
+    }
+
+    if (accel.available() && accel.readTap() > 0) {
+      if (millis() - tapTime < ACCEL_DOUBLE_TAP_DELAY) {
+        tapCount++;
+      } else {
+        tapCount = 1;
+        tapTime = millis();
+      }
+
+      if (tapCount == 1) {
+        // change color
+        updateTargets();
+        targetTime = millis() + PERIOD;
+      } else if (tapCount > 1) {
+        // send ripple
+        udp.beginPacket("255.255.255.255", 42069);
+        struct control_packet ripplePkt = {PKT_RIPPLE, to[0], to[1], to[2]};
+        udp.write((const char*) &ripplePkt, sizeof(struct control_packet));
+        udp.endPacket();
+        // broadcast packets are received by their sender so no need to do anything else,
+        // mode change happens on the next iteration
       }
     }
 
