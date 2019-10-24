@@ -9,10 +9,10 @@
 #define NPINS 3           // number of output pins
 #define PERIOD 20000       // time in milliseconds to fade between colors
 #define RIPPLE_PERIOD 5000
+#define PINSTATE_PRINT_PERIOD 100
 
 // I2C pins are 4 SDA and 5 SCL
 #define ACCEL_DOUBLE_TAP_DELAY 2000
-#define ACCEL_TAP_THRESHOLD 1.0
 
 #define CONTROL_PORT 42069
 
@@ -28,16 +28,18 @@
 #define PKT_SOLID 2
 #define PKT_RIPPLE 3
 
-int pins[NPINS] = {14, 6, 1};
+int pins[NPINS] = {14, 12, 15};
 
 int to[NPINS];
 int from[NPINS];
+int pinState[NPINS];
 unsigned long targetTime;
 unsigned long tapTime;
+unsigned long pinStatePrintTime;
 unsigned int tapCount;
 unsigned int state = STATE_CONN;
 WiFiUDP udp;
-char *announcePkt = "LightCube";
+const char *announcePkt = "LightCube";
 MMA8452Q accel;
 
 struct control_packet {
@@ -62,11 +64,14 @@ void updateTargets() {
 }
 
 int linearEasing(int t, int duration, int from, int to) {
-  return (int)(((to - from) * ((double)t / duration)) + from);
+  return (int)((to - from) * ((double)t / duration) + from);
 }
 
-int quadraticEasing(int t, int duration, int from, int to) {
+int quadraticEaseUp(int t, int duration, int from, int to) {
   return (int)((to - from) * pow((double)t / duration, 2.0) + from);
+}
+int quadraticEaseDown(int t, int duration, int from, int to) {
+  return (int)((to - from) * (1.0 / pow(((double)t / duration) + 1, 2.0)) + from);
 }
 
 void setup() {
@@ -74,7 +79,6 @@ void setup() {
   Serial.begin(115200);
   Serial.println("LightCube");
   Serial.flush();
-  pinMode(16, INPUT);
   pinMode(LED_BUILTIN, OUTPUT);
   randomSeed(analogRead(A0));
 
@@ -94,12 +98,21 @@ void setup() {
   udp.beginPacket("255.255.255.255", 42069);
   udp.write(announcePkt);
   udp.endPacket();
+  Serial.println("Initial announce sent");
+  Serial.flush();
+
+  yield();
 
   for (int i = 0; i < NPINS; i++) {
     pinMode(pins[i], OUTPUT);
     to[i] = 0;
     digitalWrite(pins[i], 0);
+    Serial.print("Enable pin ");
+    Serial.println(pins[i]);
+    Serial.flush();
   }
+  Serial.println("Pins enabled");
+  Serial.flush();
   for (int i = 0; i < NPINS; i++) {
     digitalWrite(pins[i], 1);
     delay(500);
@@ -117,7 +130,7 @@ void loop() {
   if (WiFi.status() == WL_CONNECTED) {
     // update target colors if needed and send announce packet
     if (millis() > targetTime) {
-      if (state == STATE_ON) {
+      if (state == STATE_ON || state == STATE_RIPPLE) {
         updateTargets();
       }
       Serial.println("Sending announce");
@@ -133,17 +146,21 @@ void loop() {
       udp.read((char *) &pkt, sizeof(struct control_packet));
 
       if (pkt.type == PKT_OFF) {
+        Serial.println("Received PKT_OFF");
         state = STATE_OFF;
       } else if (pkt.type == PKT_ON) {
         state = STATE_ON;
+        Serial.println("Received PKT_ON");
       } else if (pkt.type == PKT_SOLID) {
         state = STATE_SOLID;
+        Serial.println("Received PKT_SOLID");
         to[0] = pkt.r * (PWMRANGE / 255);
         to[1] = pkt.g * (PWMRANGE / 255);
         to[2] = pkt.b * (PWMRANGE / 255);
       } else if (pkt.type == PKT_RIPPLE && state == STATE_ON) {
         targetTime = millis() + RIPPLE_PERIOD;
         state = STATE_RIPPLE;
+        Serial.println("Received PKT_RIPPLE");
         to[0] = pkt.r * (PWMRANGE / 255);
         to[1] = pkt.g * (PWMRANGE / 255);
         to[2] = pkt.b * (PWMRANGE / 255);
@@ -151,18 +168,21 @@ void loop() {
     }
 
     // check for taps
-    if (accel.available() && accel.readTap() > 0) {
+    if ((state == STATE_ON || state == STATE_RIPPLE) && accel.available() && accel.readTap() > 0) {
       if (millis() - tapTime < ACCEL_DOUBLE_TAP_DELAY) {
         tapCount++;
       } else {
         tapCount = 1;
-        tapTime = millis();
       }
+      tapTime = millis();
+      Serial.print("Tapped, count is ");
+      Serial.println(tapCount);
 
       if (tapCount == 1) {
         // change color
         updateTargets();
-        targetTime = millis() + PERIOD;
+        targetTime = millis() + RIPPLE_PERIOD;
+        state = STATE_RIPPLE;
       } else if (tapCount > 1) {
         // send ripple
         udp.beginPacket("255.255.255.255", 42069);
@@ -174,8 +194,9 @@ void loop() {
         };
         udp.write((const char*) &ripplePkt, sizeof(struct control_packet));
         udp.endPacket();
-        // broadcast packets are received by their sender so no need to do anything else,
-        // mode change happens on the next iteration
+        Serial.println("Sent PKT_RIPPLE");
+        targetTime = millis() + RIPPLE_PERIOD;
+        state = STATE_RIPPLE;
       }
     }
 
@@ -183,31 +204,80 @@ void loop() {
     if (state == STATE_ON) {
       // breathe random colors
       for (int i = 0; i < NPINS; i++) {
-        if (targetTime - millis() < PERIOD / 2)
-          analogWrite(pins[i], quadraticEasing(targetTime - millis(), PERIOD / 2, 0, to[i]));
+        if (targetTime - millis() > PERIOD / 2) {
+          if (pinStatePrintTime - millis() > PINSTATE_PRINT_PERIOD)
+            Serial.print("EASE UP ");
+          pinState[i] = to[i] - linearEasing(targetTime - millis() - (PERIOD / 2), PERIOD / 2, 0, to[i]);
           //digitalWrite(pins[i], HIGH);
-        else
-          analogWrite(pins[i], quadraticEasing(targetTime - millis() - PERIOD / 2, PERIOD / 2, to[i], 0));
+        } else {
+          if (pinStatePrintTime - millis() > PINSTATE_PRINT_PERIOD)
+            Serial.print("EASE DOWN ");
+          pinState[i] = to[i] + linearEasing(targetTime - millis() - (PERIOD / 2), PERIOD / 2, 0, to[i]);
           //digitalWrite(pins[i], LOW);
+        }
       }
     } else if (state == STATE_SOLID) {
       for (int i = 0; i < NPINS; i++) {
-        analogWrite(pins[i], to[i]);
+        pinState[i] = to[i];
       }
     } else if (state == STATE_RIPPLE) {
       for (int i = 0; i < NPINS; i++) {
-        if (targetTime - millis() < RIPPLE_PERIOD / 2)
-          analogWrite(pins[i], to[i]);
+        if (targetTime - millis() > RIPPLE_PERIOD / 2) {
+          if (pinStatePrintTime - millis() > PINSTATE_PRINT_PERIOD)
+            Serial.print("EASE SOLID ");
+          pinState[i] = to[i];
           //digitalWrite(pins[i], HIGH);
-        else
-          analogWrite(pins[i], quadraticEasing(targetTime - millis() - RIPPLE_PERIOD / 2, RIPPLE_PERIOD / 2, to[i], 0));
+        } else {
+          if (pinStatePrintTime - millis() > PINSTATE_PRINT_PERIOD)
+            Serial.print("EASE DOWN ");
+          pinState[i] = to[i] + linearEasing(targetTime - millis() - (RIPPLE_PERIOD / 2), RIPPLE_PERIOD / 2, 0, to[i]);
           //digitalWrite(pins[i], LOW);
+        }
       }
     } else {
       state = STATE_OFF;
       for (int i = 0; i < NPINS; i++) {
         digitalWrite(pins[i], 0);
       }
+    }
+    for(int i = 0; i < NPINS; i++) {
+      if (pinStatePrintTime - millis() > PINSTATE_PRINT_PERIOD) {
+        Serial.print("[");
+        Serial.print(i);
+        Serial.print(":");
+        Serial.print(pins[i]);
+        Serial.print("] ");
+        Serial.print(pinState[i]);
+        Serial.print("/");
+        Serial.print(to[i]);
+        Serial.print("; ");
+      }
+      analogWrite(pins[i], pinState[i]);
+    }
+    if (pinStatePrintTime - millis() > PINSTATE_PRINT_PERIOD) {
+      const char *state_msg;
+      switch (state) {
+        case STATE_CONN:
+          state_msg = "STATE_CONN";
+          break;
+        case STATE_ON:
+          state_msg = "STATE_ON";
+          break;
+        case STATE_OFF:
+          state_msg = "STATE_OFF";
+          break;
+        case STATE_RIPPLE:
+          state_msg = "STATE_RIPPLE";
+          break;
+        case STATE_SOLID:
+          state_msg = "STATE_SOLID";
+          break;
+        default:
+          state_msg = "STATE_ERROR";
+          break;
+      }
+      Serial.println(state_msg);
+      pinStatePrintTime = millis() + PINSTATE_PRINT_PERIOD;
     }
   } else { // wifi is not connected
     state = STATE_ERR;
