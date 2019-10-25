@@ -7,9 +7,12 @@
 #include <SparkFun_MMA8452Q.h>
 
 #define NPINS 3           // number of output pins
-#define PERIOD 20000       // time in milliseconds to fade between colors
+#define PERIOD 15000       // time in milliseconds to fade between colors
+#define REST_PERIOD 5000
 #define RIPPLE_PERIOD 5000
 #define PINSTATE_PRINT_PERIOD 100
+
+#define EXPONENT ( 1.0/5 )
 
 // I2C pins are 4 SDA and 5 SCL
 #define ACCEL_DOUBLE_TAP_DELAY 2000
@@ -68,10 +71,12 @@ int linearEasing(int t, int duration, int from, int to) {
 }
 
 int quadraticEaseUp(int t, int duration, int from, int to) {
-  return (int)((to - from) * pow((double)t / duration, 2.0) + from);
+  double fraction = (double)t / duration;
+  return (int)((to - from) * pow(fraction, EXPONENT) + from);
 }
 int quadraticEaseDown(int t, int duration, int from, int to) {
-  return (int)((to - from) * (1.0 / pow(((double)t / duration) + 1, 2.0)) + from);
+  double fraction = 1 - ((double)t / duration);
+  return (int)((to - from) * -pow(fraction, EXPONENT) + 1 + from);
 }
 
 void setup() {
@@ -123,7 +128,7 @@ void setup() {
   Serial.flush();
 
   updateTargets();
-  targetTime = millis() + PERIOD;
+  targetTime = millis() + PERIOD + REST_PERIOD;
 }
 
 void loop() {
@@ -137,7 +142,7 @@ void loop() {
       udp.beginPacket("255.255.255.255", 42069);
       udp.write(announcePkt);
       udp.endPacket();
-      targetTime = millis() + PERIOD;
+      targetTime = millis() + PERIOD + REST_PERIOD;
     }
     
     // check for available packets
@@ -204,15 +209,19 @@ void loop() {
     if (state == STATE_ON) {
       // breathe random colors
       for (int i = 0; i < NPINS; i++) {
-        if (targetTime - millis() > PERIOD / 2) {
+        if (targetTime - millis() > PERIOD) {
+          if (pinStatePrintTime - millis() > PINSTATE_PRINT_PERIOD)
+            Serial.print("SLEEP ");
+          pinState[i] = 0;
+        } else if (targetTime - millis() > PERIOD / 2) {
           if (pinStatePrintTime - millis() > PINSTATE_PRINT_PERIOD)
             Serial.print("EASE UP ");
-          pinState[i] = to[i] - linearEasing(targetTime - millis() - (PERIOD / 2), PERIOD / 2, 0, to[i]);
+          pinState[i] = to[i] - quadraticEaseUp(targetTime - millis() - (PERIOD / 2), PERIOD / 2, 0, to[i]);
           //digitalWrite(pins[i], HIGH);
         } else {
           if (pinStatePrintTime - millis() > PINSTATE_PRINT_PERIOD)
             Serial.print("EASE DOWN ");
-          pinState[i] = to[i] + linearEasing(targetTime - millis() - (PERIOD / 2), PERIOD / 2, 0, to[i]);
+          pinState[i] = to[i] + quadraticEaseDown(targetTime - millis(), PERIOD / 2, 0, to[i]);
           //digitalWrite(pins[i], LOW);
         }
       }
